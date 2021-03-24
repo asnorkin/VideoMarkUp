@@ -1,6 +1,5 @@
 import os
 import os.path as osp
-from collections import Counter
 
 import cv2
 import h5py
@@ -8,6 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from albumentations.augmentations.functional import brightness_contrast_adjust, clahe
+from streamlit.elements.utils import NoValue
 
 import vtools as vt
 from utils import config_page, get_arguments, load_sequences, save_sequences, title, Stage
@@ -18,7 +18,7 @@ def labeling(args):
 
     # Sidebar options
     data_path, track_id, track_ids, frames = choose_data_and_track(args.data_dir, args.output_dir)
-    n_rows, images_per_row, stride = choose_image_grid_params()
+    n_rows, images_per_row, stride, auto_update_frame = choose_image_grid_params()
     image_transforms = choose_image_transforms()
 
     # Frame
@@ -29,7 +29,7 @@ def labeling(args):
     # Create file with marked data
     sequences_file = osp.join(args.output_dir, osp.splitext(osp.basename(data_path))[0] + ".json")
     sequences = load_sequences(sequences_file, track_ids)
-    sequences = adding_sequences(sequences, track_id)
+    sequences = adding_sequences(sequences, track_id, auto_update_frame)
     track_sequences = sequences[track_id]
 
     # Images
@@ -79,7 +79,8 @@ def choose_image_grid_params():
     n_rows = st.sidebar.slider("Number of rows", min_value=1, max_value=10, value=5, step=1)
     images_per_row = st.sidebar.slider("Number of images per row", min_value=9, max_value=49, value=19, step=10)
     stride = st.sidebar.slider("Stride", min_value=1, max_value=25, value=5, step=1)
-    return n_rows, images_per_row, stride
+    auto_update_frame = st.sidebar.checkbox("Update first and last frame")
+    return n_rows, images_per_row, stride, auto_update_frame
 
 
 def choose_image_transforms():
@@ -110,10 +111,15 @@ def choose_data(data_dir):
     return os.path.join(data_dir, data_file)
 
 
-def adding_sequences(sequences, track_id):
+def adding_sequences(sequences, track_id, auto_update_frame_id=False):
     # Load state
     state = st.experimental_get_query_params()
-    new_first_frame = int(state.get("new_first_frame", [0])[0])
+    if auto_update_frame_id:
+        new_first_frame = int(state.get("new_first_frame", [0])[0])
+        new_last_frame = new_first_frame + 1
+    else:
+        new_first_frame = NoValue()
+        new_last_frame = NoValue()
 
     # Add sequence interface
     columns = st.beta_columns(3)
@@ -125,7 +131,7 @@ def adding_sequences(sequences, track_id):
         col2 = st.empty()
 
     first_frame = col1.number_input("First frame", value=new_first_frame, min_value=0, step=5, key="first_frame")
-    last_frame = col2.number_input("Last frame", value=new_first_frame + 1, min_value=0, step=5, key="last_frame")
+    last_frame = col2.number_input("Last frame", value=new_last_frame, min_value=0, step=5, key="last_frame")
 
     # Getting the number
     number = None
