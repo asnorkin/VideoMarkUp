@@ -22,7 +22,7 @@ def labeling(args):
     image_transforms = choose_image_transforms()
 
     # Frame
-    step = (n_rows - 1) * images_per_row * stride
+    step = max(1, (n_rows - 1) * images_per_row * stride)
     frame_no = choose_frame_no(len(frames) - 1, step)
     st.text(f"This is {frame_no:5d} frame.")
 
