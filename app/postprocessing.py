@@ -36,7 +36,15 @@ def postprocessing(args):
 
 
 def process_data(labels_file, detects_file, video_file, output_dir, pbar=None):
+    ext = "png"
+    match_name = osp.splitext(osp.basename(video_file))[0]
+
+    def image_file(track_id, frame_id):
+        return f"track_{track_id}_frame_{frame_id}.{ext}"
+
     sequences = load_sequences(labels_file)
+
+    # Generate labels df
     labels = []
     for track_id, track_sequences in sequences.items():
         for first, last, number in track_sequences.segments:
@@ -44,31 +52,40 @@ def process_data(labels_file, detects_file, video_file, output_dir, pbar=None):
                 labels.append({
                     "track_id": track_id,
                     "rel_frame": frame_id,
-                    "label": number,
+                    "number": number,
                 })
     labels_df = pd.DataFrame(labels, dtype=int)
 
+    # Extract tracks meta
     detects = pd.read_csv(detects_file, low_memory=False)
-    track_ids = np.unique(
-        detects[~np.isnan(detects['track_id'])]['track_id']).astype(int)
-    tracks = {track_id: detects[detects['track_id']
-                                == track_id] for track_id in track_ids}
+    track_ids = np.unique(detects[~np.isnan(detects['track_id'])]['track_id']).astype(int)
+    tracks = {track_id: detects[detects['track_id'] == track_id] for track_id in track_ids}
+
+    frame_ids, rel_paths = [], []
+
+    # Fill labels and absolute frames mapping
     frame_sets = {track_id: set() for track_id in track_ids}
     labels = {track_id: {} for track_id in track_ids}
     for i, row in labels_df.iterrows():
-        track_id = row["track_id"]
-        frame_no = tracks[track_id].iloc[row["rel_frame"]]["frame_id"]
+        track_id = row.track_id
+        frame_no = tracks[track_id].iloc[row.rel_frame]["frame_id"]
         frame_sets[track_id].add(frame_no)
-        labels[track_id][frame_no] = row["label"]
+        labels[track_id][frame_no] = row.number
 
-    match_name = video_file[video_file.rfind("\\") + 1: video_file.rfind(".mp4")]
+        # Add absolute frame_id and rel_path to
+        frame_ids.append(frame_no)
+        rel_paths.append(f"{match_name}/{image_file(track_id, frame_no)}")
+
+    # Update labels_df
+    labels_df["frame_id"] = frame_ids
+    labels_df["rel_path"] = rel_paths
+    labels_df.drop(columns=["rel_frame"], inplace=True)
+
+    match_name = osp.splitext(osp.basename(video_file))[0]
     match_dir = os.path.join(output_dir, match_name)
 
-    visible_dir = os.path.join(match_dir, "visible")
-    os.makedirs(visible_dir, exist_ok=True)
-
-    not_visible_dir = os.path.join(match_dir, "not_visible")
-    os.makedirs(not_visible_dir, exist_ok=True)
+    images_dir = os.path.join(match_dir, match_name)
+    os.makedirs(images_dir, exist_ok=True)
 
     cap = cv2.VideoCapture(video_file)
     assert cap.isOpened(), "Can't open video"
@@ -78,20 +95,16 @@ def process_data(labels_file, detects_file, video_file, output_dir, pbar=None):
         for track_id in track_ids:
             if frame_no in frame_sets[track_id]:
                 bbox = vt.bbox_from_df(tracks[track_id], frame_no)
-                _, orig_bbox = vt.get_bbox(
-                    frame, bbox, return_original_bbox=True)
-                save_filename = f"track_{track_id}_frame_{frame_no}.png"
-                if labels[track_id][frame_no] == -1:
-                    cv2.imwrite(os.path.join(not_visible_dir, save_filename), orig_bbox)
-                else:
-                    cv2.imwrite(os.path.join(visible_dir, save_filename), orig_bbox)
+                _, orig_bbox = vt.get_bbox(frame, bbox, return_original_bbox=True)
+                save_filename = osp.join(images_dir, image_file(track_id, frame_no))
+                cv2.imwrite(save_filename, orig_bbox)
+
         frame_no += 1
         if pbar:
             pbar.progress(frame_no / last_frame)
         if frame_no == last_frame:
             break
 
-    copy(labels_file, match_dir)
     labels_df.to_csv(osp.join(match_dir, osp.splitext(osp.basename(labels_file))[0] + ".csv"), index=False)
     make_archive(os.path.join(output_dir, match_name), "zip", match_dir)
     rmtree(match_dir)
